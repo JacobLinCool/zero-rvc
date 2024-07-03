@@ -1,0 +1,6 @@
+zerorvc>=0.0.5
+
+# gradio app deps
+gradio==4.37.2
+demucs==4.0.1
+yt_dlp
