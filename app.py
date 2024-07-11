@@ -4,6 +4,12 @@ from app.tutorial import TutotialTab
 from app.dataset import DatasetTab
 from app.train import TrainTab
 from app.infer import InferenceTab
+from app.zero import zero_is_available
+
+if zero_is_available:
+    import torch
+
+    torch.backends.cuda.matmul.allow_tf32 = True
 
 
 with gr.Blocks() as app:
