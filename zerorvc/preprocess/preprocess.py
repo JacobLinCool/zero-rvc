@@ -1,13 +1,13 @@
 import numpy as np
 import librosa
-from typing import Tuple
 from scipy import signal
 from .slicer2 import Slicer
-from ..constants import SR_16K
 
 
 class Preprocessor:
-    def __init__(self, sr: int, max_slice_length: float = 3.0):
+    def __init__(
+        self, sr: int, max_slice_length: float = 3.0, min_slice_length: float = 0.5
+    ):
         self.slicer = Slicer(
             sr=sr,
             threshold=-42,
@@ -19,6 +19,7 @@ class Preprocessor:
         self.sr = sr
         self.bh, self.ah = signal.butter(N=5, Wn=48, btype="high", fs=self.sr)
         self.max_slice_length = max_slice_length
+        self.max_slice_length = min_slice_length
         self.overlap = 0.3
         self.tail = self.max_slice_length + self.overlap
         self.max = 0.9
@@ -43,7 +44,8 @@ class Preprocessor:
                     audios.append(self.norm(slice))
                 else:
                     slice = audio[start:]
-                    audios.append(self.norm(slice))
+                    if len(slice) > self.min_slice_length * self.sr:
+                        audios.append(self.norm(slice))
                     break
         return audios
 

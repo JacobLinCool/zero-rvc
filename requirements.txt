@@ -1,4 +1,4 @@
-zerorvc>=0.0.7
+zerorvc>=0.0.8
 
 # gradio app deps
 gradio==4.37.2
