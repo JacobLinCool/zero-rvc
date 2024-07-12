@@ -1,0 +1,36 @@
+[project]
+name = "zerorvc"
+version = "0.0.8"
+authors = [{ name = "Jacob Lin", email = "jacob@csie.cool" }]
+description = "Run Retrieval-based Voice Conversion training and inference with ease."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.0.0",
+    "torch>=2.0.0",
+    "datasets",
+    "accelerate",
+    "huggingface_hub",
+    "tqdm",
+    "fairseq",
+    "librosa",
+    "scipy",
+]
+
+[project.urls]
+Homepage = "https://github.com/jacoblincool/zero-rvc"
+Issues = "https://github.com/jacoblincool/zero-rvc/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = ["zerorvc/**/*", "pyproject.toml", "README.md", "LICENSE"]
+[tool.hatch.build.targets.wheel]
+packages = ["zerorvc"]
