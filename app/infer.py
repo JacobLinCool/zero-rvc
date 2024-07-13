@@ -10,6 +10,29 @@ import soundfile as sf
 from zerorvc import RVC
 from .zero import zero
 from .model import device
+import yt_dlp
+
+
+def download_audio(url):
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": "ytdl/%(title)s.%(ext)s",
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "wav",
+                "preferredquality": "192",
+            }
+        ],
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=True)
+        file_path = ydl.prepare_filename(info_dict).rsplit(".", 1)[0] + ".wav"
+        sample_rate, audio_data = read(file_path)
+        audio_array = np.asarray(audio_data, dtype=np.int16)
+
+        return sample_rate, audio_array
 
 
 @zero(duration=120)
@@ -81,6 +104,22 @@ class InferenceTab:
                 type="filepath",
                 show_download_button=True,
             )
+            with gr.Accordion("inference by Link", open=False):
+                with gr.Row():
+                    youtube_link = gr.Textbox(
+                        label="Link",
+                        placeholder="Paste the link here",
+                        interactive=True,
+                    )
+                with gr.Row():
+                    gr.Markdown(
+                        "You can paste the link to the video/audio from many sites, check the complete list [here](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)"
+                    )
+                with gr.Row():
+                    download_button = gr.Button("Download!", variant="primary")
+                    download_button.click(
+                        download_audio, [youtube_link], [self.original_audio]
+                    )
 
             with gr.Column():
                 self.pitch_mod = gr.Slider(
