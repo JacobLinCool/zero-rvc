@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from huggingface_hub import HfApi, upload_folder
 from accelerate import Accelerator
 from datasets import Dataset
+from .pretrained import pretrained_checkpoints
 from .constants import *
 
 
@@ -100,15 +101,15 @@ class RVCTrainer:
         self.checkpoint_dir = checkpoint_dir
         self.sr = sr
 
-    def latest_checkpoint(self):
+    def latest_checkpoint(self, fallback_to_pretrained: bool = True):
         files_g = glob(os.path.join(self.checkpoint_dir, "G_*.pth"))
         if not files_g:
-            return None
+            return pretrained_checkpoints() if fallback_to_pretrained else None
         latest_g = max(files_g, key=os.path.getctime)
 
         files_d = glob(os.path.join(self.checkpoint_dir, "D_*.pth"))
         if not files_d:
-            return None
+            return pretrained_checkpoints() if fallback_to_pretrained else None
         latest_d = max(files_d, key=os.path.getctime)
 
         return latest_g, latest_d
