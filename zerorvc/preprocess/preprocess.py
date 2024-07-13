@@ -19,7 +19,7 @@ class Preprocessor:
         self.sr = sr
         self.bh, self.ah = signal.butter(N=5, Wn=48, btype="high", fs=self.sr)
         self.max_slice_length = max_slice_length
-        self.max_slice_length = min_slice_length
+        self.min_slice_length = min_slice_length
         self.overlap = 0.3
         self.tail = self.max_slice_length + self.overlap
         self.max = 0.9
