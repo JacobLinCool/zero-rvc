@@ -141,7 +141,15 @@ class RVCTrainer:
         upsample_kernel_sizes: list[int] = [24, 20, 4, 4],
         spk_embed_dim=109,
         gin_channels=256,
-    ):
+    ) -> Tuple[
+        SynthesizerTrnMs768NSFsid,
+        MultiPeriodDiscriminator,
+        torch.optim.AdamW,
+        torch.optim.AdamW,
+        torch.optim.lr_scheduler.ExponentialLR,
+        torch.optim.lr_scheduler.ExponentialLR,
+        int,
+    ]:
         if accelerator is None:
             accelerator = Accelerator()
 
@@ -226,9 +234,6 @@ class RVCTrainer:
         G, D, optimizer_G, optimizer_D = accelerator.prepare(
             G, D, optimizer_G, optimizer_D
         )
-
-        G: torch.Module = G
-        D: torch.Module = D
 
         return G, D, optimizer_G, optimizer_D, scheduler_G, scheduler_D, finished_epoch
 

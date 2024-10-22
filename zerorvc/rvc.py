@@ -229,7 +229,7 @@ class RVC:
         """
         use_protect = protect < 0.5
 
-        if pitch_modification != 0.0:
+        if not np.isclose(pitch_modification, 0.0):
             pitchf *= pow(2, pitch_modification / 12)
             pitch = self.rmvpe.calculate_f0_from_f0nsf(pitchf)
 
