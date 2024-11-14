@@ -1,6 +1,7 @@
 zerorvc>=0.0.10
 
 # gradio app deps
-gradio==4.37.2
+gradio
 demucs==4.0.1
 yt_dlp
+tensorboard

@@ -11,7 +11,8 @@ from accelerate import Accelerator
 from datasets import Dataset
 from .pretrained import pretrained_checkpoints
 from .constants import *
-
+from torch.utils.tensorboard import SummaryWriter
+import time
 
 from .synthesizer import commons
 from .synthesizer.models import (
@@ -100,6 +101,7 @@ class RVCTrainer:
     def __init__(self, checkpoint_dir: str = None, sr: int = SR_48K):
         self.checkpoint_dir = checkpoint_dir
         self.sr = sr
+        self.writer = SummaryWriter(os.path.join(checkpoint_dir, "logs", time.strftime("%Y%m%d-%H%M%S")))
 
     def latest_checkpoint(self, fallback_to_pretrained: bool = True):
         files_g = glob(os.path.join(self.checkpoint_dir, "G_*.pth"))
@@ -298,6 +300,15 @@ class RVCTrainer:
 
                 G.train()
                 D.train()
+                
+                epoch_loss_gen = 0.0
+                epoch_loss_fm = 0.0
+                epoch_loss_mel = 0.0
+                epoch_loss_kl = 0.0
+                epoch_loss_disc = 0.0
+                epoch_loss_gen_all = 0.0
+                num_batches = 0
+
                 for (
                     phone,
                     phone_lengths,
@@ -380,6 +391,35 @@ class RVCTrainer:
                     prev_loss_kl = loss_kl.item()
                     prev_loss_disc = loss_disc.item()
                     prev_loss_gen_all = loss_gen_all.item()
+
+                    if accelerator.is_main_process:
+                        self.writer.add_scalar('Loss/Generator', loss_gen.item(), epoch)
+                        self.writer.add_scalar('Loss/Feature_Matching', loss_fm.item(), epoch)
+                        self.writer.add_scalar('Loss/Mel', loss_mel.item(), epoch)
+                        self.writer.add_scalar('Loss/KL', loss_kl.item(), epoch)
+                        self.writer.add_scalar('Loss/Discriminator', loss_disc.item(), epoch)
+                        self.writer.add_scalar('Loss/Generator_Total', loss_gen_all.item(), epoch)
+                        self.writer.add_scalar('Learning_Rate/Generator', scheduler_G.get_last_lr()[0], epoch)
+                        self.writer.add_scalar('Learning_Rate/Discriminator', scheduler_D.get_last_lr()[0], epoch)
+
+                    epoch_loss_gen += loss_gen.item()
+                    epoch_loss_fm += loss_fm.item()
+                    epoch_loss_mel += loss_mel.item()
+                    epoch_loss_kl += loss_kl.item()
+                    epoch_loss_disc += loss_disc.item()
+                    epoch_loss_gen_all += loss_gen_all.item()
+                    num_batches += 1
+
+                if accelerator.is_main_process and num_batches > 0:
+                    self.writer.add_scalar('Loss/Generator_Epoch', epoch_loss_gen / num_batches, epoch)
+                    self.writer.add_scalar('Loss/Feature_Matching_Epoch', epoch_loss_fm / num_batches, epoch)
+                    self.writer.add_scalar('Loss/Mel_Epoch', epoch_loss_mel / num_batches, epoch)
+                    self.writer.add_scalar('Loss/KL_Epoch', epoch_loss_kl / num_batches, epoch)
+                    self.writer.add_scalar('Loss/Discriminator_Epoch', epoch_loss_disc / num_batches, epoch)
+                    self.writer.add_scalar('Loss/Generator_Total_Epoch', epoch_loss_gen_all / num_batches, epoch)
+
+                scheduler_G.step()
+                scheduler_D.step()
 
                 res = TrainingCheckpoint(
                     epoch,
@@ -520,3 +560,7 @@ class RVCTrainer:
             commit_message="Upload via ZeroRVC",
             token=kwargs.get("token"),
         )
+
+    def __del__(self):
+        if hasattr(self, 'writer'):
+            self.writer.close()
