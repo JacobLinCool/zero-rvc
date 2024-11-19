@@ -1,18 +1,18 @@
 import os
 from glob import glob
 from logging import getLogger
-from typing import Literal, Tuple
+from typing import Literal, Optional, Tuple
 from pathlib import Path
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from huggingface_hub import HfApi, upload_folder
 from accelerate import Accelerator
 from datasets import Dataset
 from .pretrained import pretrained_checkpoints
 from .constants import *
 from torch.utils.tensorboard import SummaryWriter
 import time
+from tqdm.auto import tqdm
 
 from .synthesizer import commons
 from .synthesizer.models import (
@@ -65,12 +65,12 @@ class TrainingCheckpoint:
 
     def save(
         self,
-        checkpoint_dir="./",
+        exp_dir="./",
         g_checkpoint: str | None = None,
         d_checkpoint: str | None = None,
     ):
-        g_path = g_checkpoint if g_checkpoint is not None else f"G_{self.epoch}.pth"
-        d_path = d_checkpoint if d_checkpoint is not None else f"D_{self.epoch}.pth"
+        g_path = g_checkpoint if g_checkpoint is not None else f"G_latest.pth"
+        d_path = d_checkpoint if d_checkpoint is not None else f"D_latest.pth"
         torch.save(
             {
                 "epoch": self.epoch,
@@ -84,7 +84,7 @@ class TrainingCheckpoint:
                 "loss_gen_all": self.loss_gen_all,
                 "loss_disc": self.loss_disc,
             },
-            os.path.join(checkpoint_dir, g_path),
+            os.path.join(exp_dir, g_path),
         )
         torch.save(
             {
@@ -93,26 +93,43 @@ class TrainingCheckpoint:
                 "optimizer": self.optimizer_D.state_dict(),
                 "scheduler": self.scheduler_D.state_dict(),
             },
-            os.path.join(checkpoint_dir, d_path),
+            os.path.join(exp_dir, d_path),
         )
 
 
+def latest_checkpoint_file(files: list[str]) -> str:
+    try:
+        return max(files, key=lambda x: int(Path(x).stem.split("_")[1]))
+    except:
+        return max(files, key=os.path.getctime)
+
+
 class RVCTrainer:
-    def __init__(self, checkpoint_dir: str = None, sr: int = SR_48K):
-        self.checkpoint_dir = checkpoint_dir
+    def __init__(
+        self,
+        exp_dir: str,
+        dataset_train: Dataset,
+        dataset_test: Optional[Dataset] = None,
+        sr: int = SR_48K,
+    ):
+        self.exp_dir = exp_dir
+        self.dataset_train = dataset_train
+        self.dataset_test = dataset_test
         self.sr = sr
-        self.writer = SummaryWriter(os.path.join(checkpoint_dir, "logs", time.strftime("%Y%m%d-%H%M%S")))
+        self.writer = SummaryWriter(
+            os.path.join(exp_dir, "logs", time.strftime("%Y%m%d-%H%M%S"))
+        )
 
     def latest_checkpoint(self, fallback_to_pretrained: bool = True):
-        files_g = glob(os.path.join(self.checkpoint_dir, "G_*.pth"))
+        files_g = glob(os.path.join(self.exp_dir, "G_*.pth"))
         if not files_g:
             return pretrained_checkpoints() if fallback_to_pretrained else None
-        latest_g = max(files_g, key=os.path.getctime)
+        latest_g = latest_checkpoint_file(files_g)
 
-        files_d = glob(os.path.join(self.checkpoint_dir, "D_*.pth"))
+        files_d = glob(os.path.join(self.exp_dir, "D_*.pth"))
         if not files_d:
             return pretrained_checkpoints() if fallback_to_pretrained else None
-        latest_d = max(files_d, key=os.path.getctime)
+        latest_d = latest_checkpoint_file(files_d)
 
         return latest_g, latest_d
 
@@ -267,7 +284,8 @@ class RVCTrainer:
         scheduler_G,
         scheduler_D,
         finished_epoch,
-        loader,
+        loader_train,
+        loader_test,
         accelerator: Accelerator | None = None,
         epochs=100,
         segment_size=17280,
@@ -279,6 +297,7 @@ class RVCTrainer:
         mel_fmax: float | None = None,
         c_mel=45,
         c_kl=1.0,
+        upload_to_hub: str | None = None,
     ):
         if accelerator is None:
             accelerator = Accelerator()
@@ -294,13 +313,18 @@ class RVCTrainer:
         prev_loss_gen_all = -1.0
 
         with accelerator.autocast():
-            for epoch in range(1, epochs + 1):
+            epoch_iterator = tqdm(
+                range(1, epochs + 1),
+                desc="Training",
+                disable=not accelerator.is_main_process
+            )
+            for epoch in epoch_iterator:
                 if epoch <= finished_epoch:
                     continue
 
                 G.train()
                 D.train()
-                
+
                 epoch_loss_gen = 0.0
                 epoch_loss_fm = 0.0
                 epoch_loss_mel = 0.0
@@ -309,17 +333,25 @@ class RVCTrainer:
                 epoch_loss_gen_all = 0.0
                 num_batches = 0
 
-                for (
-                    phone,
-                    phone_lengths,
-                    pitch,
-                    pitchf,
-                    spec,
-                    spec_lengths,
-                    wave,
-                    wave_lengths,
-                    sid,
-                ) in loader:
+                batch_iterator = tqdm(
+                    loader_train,
+                    desc=f"Epoch {epoch}",
+                    leave=False,
+                    disable=not accelerator.is_main_process
+                )
+                for batch in batch_iterator:
+                    (
+                        phone,
+                        phone_lengths,
+                        pitch,
+                        pitchf,
+                        spec,
+                        spec_lengths,
+                        wave,
+                        wave_lengths,
+                        sid,
+                    ) = batch
+
                     # Generator
                     optimizer_G.zero_grad()
                     (
@@ -392,34 +424,107 @@ class RVCTrainer:
                     prev_loss_disc = loss_disc.item()
                     prev_loss_gen_all = loss_gen_all.item()
 
+                    # Update progress bar with current losses
                     if accelerator.is_main_process:
-                        self.writer.add_scalar('Loss/Generator', loss_gen.item(), epoch)
-                        self.writer.add_scalar('Loss/Feature_Matching', loss_fm.item(), epoch)
-                        self.writer.add_scalar('Loss/Mel', loss_mel.item(), epoch)
-                        self.writer.add_scalar('Loss/KL', loss_kl.item(), epoch)
-                        self.writer.add_scalar('Loss/Discriminator', loss_disc.item(), epoch)
-                        self.writer.add_scalar('Loss/Generator_Total', loss_gen_all.item(), epoch)
-                        self.writer.add_scalar('Learning_Rate/Generator', scheduler_G.get_last_lr()[0], epoch)
-                        self.writer.add_scalar('Learning_Rate/Discriminator', scheduler_D.get_last_lr()[0], epoch)
+                        batch_iterator.set_postfix({
+                            'g_loss': f"{prev_loss_gen:.4f}",
+                            'd_loss': f"{prev_loss_disc:.4f}",
+                            'mel_loss': f"{prev_loss_mel:.4f}",
+                            'total': f"{prev_loss_gen_all:.4f}"
+                        })
 
-                    epoch_loss_gen += loss_gen.item()
-                    epoch_loss_fm += loss_fm.item()
-                    epoch_loss_mel += loss_mel.item()
-                    epoch_loss_kl += loss_kl.item()
-                    epoch_loss_disc += loss_disc.item()
-                    epoch_loss_gen_all += loss_gen_all.item()
+                    epoch_loss_gen += prev_loss_gen
+                    epoch_loss_fm += prev_loss_fm
+                    epoch_loss_mel += prev_loss_mel
+                    epoch_loss_kl += prev_loss_kl
+                    epoch_loss_disc += prev_loss_disc
+                    epoch_loss_gen_all += prev_loss_gen_all
                     num_batches += 1
-
-                if accelerator.is_main_process and num_batches > 0:
-                    self.writer.add_scalar('Loss/Generator_Epoch', epoch_loss_gen / num_batches, epoch)
-                    self.writer.add_scalar('Loss/Feature_Matching_Epoch', epoch_loss_fm / num_batches, epoch)
-                    self.writer.add_scalar('Loss/Mel_Epoch', epoch_loss_mel / num_batches, epoch)
-                    self.writer.add_scalar('Loss/KL_Epoch', epoch_loss_kl / num_batches, epoch)
-                    self.writer.add_scalar('Loss/Discriminator_Epoch', epoch_loss_disc / num_batches, epoch)
-                    self.writer.add_scalar('Loss/Generator_Total_Epoch', epoch_loss_gen_all / num_batches, epoch)
 
                 scheduler_G.step()
                 scheduler_D.step()
+
+                if accelerator.is_main_process and num_batches > 0:
+                    avg_gen = epoch_loss_gen / num_batches
+                    avg_disc = epoch_loss_disc / num_batches
+                    avg_mel = epoch_loss_mel / num_batches
+                    avg_kl = epoch_loss_kl / num_batches
+                    avg_total = epoch_loss_gen_all / num_batches
+
+                    logger.info(
+                        f"Epoch {epoch} | "
+                        f"Generator Loss: {avg_gen:.4f} | "
+                        f"Discriminator Loss: {avg_disc:.4f} | "
+                        f"Mel Loss: {avg_mel:.4f} | "
+                        f"Total Loss: {avg_total:.4f}"
+                    )
+
+                    # Update epoch progress bar
+                    epoch_iterator.set_postfix({
+                        'g_loss': f"{avg_gen:.4f}",
+                        'd_loss': f"{avg_disc:.4f}",
+                        'total': f"{avg_total:.4f}"
+                    })
+
+                    self.writer.add_scalar(
+                        "Loss/Generator", avg_gen, epoch
+                    )
+                    self.writer.add_scalar(
+                        "Loss/Feature_Matching", avg_disc, epoch
+                    )
+                    self.writer.add_scalar(
+                        "Loss/Mel", avg_mel, epoch
+                    )
+                    self.writer.add_scalar(
+                        "Loss/KL", avg_kl, epoch
+                    )
+                    self.writer.add_scalar(
+                        "Loss/Discriminator", avg_disc, epoch
+                    )
+                    self.writer.add_scalar(
+                        "Loss/Generator_Total", avg_total, epoch
+                    )
+                    self.writer.add_scalar(
+                        "Learning_Rate/Generator",
+                        scheduler_G.get_last_lr()[0],
+                        epoch,
+                    )
+                    self.writer.add_scalar(
+                        "Learning_Rate/Discriminator",
+                        scheduler_D.get_last_lr()[0],
+                        epoch,
+                    )
+
+                if loader_test is not None:
+                    with torch.no_grad():
+                        test_iterator = tqdm(
+                            loader_test,
+                            desc=f"Testing epoch {epoch}",
+                            leave=False,
+                            disable=not accelerator.is_main_process
+                        )
+                        for i, (
+                            phone,
+                            phone_lengths,
+                            pitch,
+                            pitchf,
+                            spec,
+                            spec_lengths,
+                            wave,
+                            wave_lengths,
+                            sid,
+                        ) in enumerate(test_iterator):
+                            audio_segment = (
+                                G.infer(phone, phone_lengths, pitch, pitchf, sid)[0][
+                                    0, 0
+                                ]
+                                .data.cpu()
+                                .float()
+                                .numpy()
+                            )
+                            self.writer.add_audio(
+                                f"Audio/{i}", audio_segment, epoch, sample_rate=self.sr
+                            )
 
                 res = TrainingCheckpoint(
                     epoch,
@@ -436,11 +541,19 @@ class RVCTrainer:
                     prev_loss_gen_all,
                     prev_loss_disc,
                 )
-                yield res
+
+                res.save(self.exp_dir)
+
+                if upload_to_hub is not None:
+                    self.push_to_hub(upload_to_hub)
+
+        # save final model
+        G.save_pretrained(self.exp_dir)
+        if upload_to_hub is not None:
+            G.push_to_hub(upload_to_hub)
 
     def train(
         self,
-        dataset: Dataset,
         resume_from: Tuple[str, str] | None = None,
         accelerator: Accelerator | None = None,
         batch_size=1,
@@ -474,9 +587,10 @@ class RVCTrainer:
         mel_fmax: float | None = None,
         c_mel=45,
         c_kl=1.0,
+        upload_to_hub: str | None = None,
     ):
-        if not os.path.exists(self.checkpoint_dir):
-            os.makedirs(self.checkpoint_dir)
+        if not os.path.exists(self.exp_dir):
+            os.makedirs(self.exp_dir)
 
         if accelerator is None:
             accelerator = Accelerator()
@@ -490,7 +604,7 @@ class RVCTrainer:
             scheduler_D,
             finished_epoch,
         ) = self.setup_models(
-            resume_from=resume_from,
+            resume_from=resume_from or self.latest_checkpoint(),
             accelerator=accelerator,
             lr=lr,
             lr_decay=lr_decay,
@@ -517,10 +631,20 @@ class RVCTrainer:
             gin_channels=gin_channels,
         )
 
-        loader = self.setup_dataloader(
-            dataset,
+        loader_train = self.setup_dataloader(
+            self.dataset_train,
             batch_size=batch_size,
             accelerator=accelerator,
+        )
+
+        loader_test = (
+            self.setup_dataloader(
+                self.dataset_test,
+                batch_size=1,
+                accelerator=accelerator,
+            )
+            if self.dataset_test is not None
+            else None
         )
 
         return self.run(
@@ -531,7 +655,8 @@ class RVCTrainer:
             scheduler_G,
             scheduler_D,
             finished_epoch,
-            loader,
+            loader_train,
+            loader_test,
             accelerator,
             epochs=epochs,
             segment_size=segment_size,
@@ -543,24 +668,9 @@ class RVCTrainer:
             mel_fmax=mel_fmax,
             c_mel=c_mel,
             c_kl=c_kl,
-        )
-
-    def push_to_hub(self, repo: str, **kwargs):
-        if not os.path.exists(self.checkpoint_dir):
-            raise FileNotFoundError("Checkpoints not found")
-
-        api = HfApi(token=kwargs.get("token"))
-        repo_id = api.create_repo(
-            repo_id=repo, private=kwargs.get("private"), exist_ok=True
-        ).repo_id
-
-        return upload_folder(
-            repo_id=repo_id,
-            folder_path=self.checkpoint_dir,
-            commit_message="Upload via ZeroRVC",
-            token=kwargs.get("token"),
+            upload_to_hub=upload_to_hub,
         )
 
     def __del__(self):
-        if hasattr(self, 'writer'):
+        if hasattr(self, "writer"):
             self.writer.close()

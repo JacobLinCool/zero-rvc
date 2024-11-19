@@ -147,6 +147,9 @@ def prepare(
             shutil.copy(mute_source, mute_dest)
 
         ds: DatasetDict = load_dataset("audiofolder", data_dir=dir)
+
+    for key in ds:
+        ds[key] = ds[key].remove_columns([col for col in ds[key].column_names if col != "audio"])
     ds = ds.cast_column("audio", Audio(sampling_rate=sr))
 
     if stage <= 0:
