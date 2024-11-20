@@ -13,6 +13,7 @@ from .constants import *
 from torch.utils.tensorboard import SummaryWriter
 import time
 from tqdm.auto import tqdm
+from huggingface_hub import HfApi, upload_folder
 
 from .synthesizer import commons
 from .synthesizer.models import (
@@ -316,7 +317,7 @@ class RVCTrainer:
             epoch_iterator = tqdm(
                 range(1, epochs + 1),
                 desc="Training",
-                disable=not accelerator.is_main_process
+                disable=not accelerator.is_main_process,
             )
             for epoch in epoch_iterator:
                 if epoch <= finished_epoch:
@@ -337,7 +338,7 @@ class RVCTrainer:
                     loader_train,
                     desc=f"Epoch {epoch}",
                     leave=False,
-                    disable=not accelerator.is_main_process
+                    disable=not accelerator.is_main_process,
                 )
                 for batch in batch_iterator:
                     (
@@ -426,12 +427,14 @@ class RVCTrainer:
 
                     # Update progress bar with current losses
                     if accelerator.is_main_process:
-                        batch_iterator.set_postfix({
-                            'g_loss': f"{prev_loss_gen:.4f}",
-                            'd_loss': f"{prev_loss_disc:.4f}",
-                            'mel_loss': f"{prev_loss_mel:.4f}",
-                            'total': f"{prev_loss_gen_all:.4f}"
-                        })
+                        batch_iterator.set_postfix(
+                            {
+                                "g_loss": f"{prev_loss_gen:.4f}",
+                                "d_loss": f"{prev_loss_disc:.4f}",
+                                "mel_loss": f"{prev_loss_mel:.4f}",
+                                "total": f"{prev_loss_gen_all:.4f}",
+                            }
+                        )
 
                     epoch_loss_gen += prev_loss_gen
                     epoch_loss_fm += prev_loss_fm
@@ -447,6 +450,7 @@ class RVCTrainer:
                 if accelerator.is_main_process and num_batches > 0:
                     avg_gen = epoch_loss_gen / num_batches
                     avg_disc = epoch_loss_disc / num_batches
+                    avg_fm = epoch_loss_fm / num_batches
                     avg_mel = epoch_loss_mel / num_batches
                     avg_kl = epoch_loss_kl / num_batches
                     avg_total = epoch_loss_gen_all / num_batches
@@ -460,30 +464,20 @@ class RVCTrainer:
                     )
 
                     # Update epoch progress bar
-                    epoch_iterator.set_postfix({
-                        'g_loss': f"{avg_gen:.4f}",
-                        'd_loss': f"{avg_disc:.4f}",
-                        'total': f"{avg_total:.4f}"
-                    })
+                    epoch_iterator.set_postfix(
+                        {
+                            "g_loss": f"{avg_gen:.4f}",
+                            "d_loss": f"{avg_disc:.4f}",
+                            "total": f"{avg_total:.4f}",
+                        }
+                    )
 
-                    self.writer.add_scalar(
-                        "Loss/Generator", avg_gen, epoch
-                    )
-                    self.writer.add_scalar(
-                        "Loss/Feature_Matching", avg_disc, epoch
-                    )
-                    self.writer.add_scalar(
-                        "Loss/Mel", avg_mel, epoch
-                    )
-                    self.writer.add_scalar(
-                        "Loss/KL", avg_kl, epoch
-                    )
-                    self.writer.add_scalar(
-                        "Loss/Discriminator", avg_disc, epoch
-                    )
-                    self.writer.add_scalar(
-                        "Loss/Generator_Total", avg_total, epoch
-                    )
+                    self.writer.add_scalar("Loss/Generator", avg_gen, epoch)
+                    self.writer.add_scalar("Loss/Feature_Matching", avg_fm, epoch)
+                    self.writer.add_scalar("Loss/Mel", avg_mel, epoch)
+                    self.writer.add_scalar("Loss/KL", avg_kl, epoch)
+                    self.writer.add_scalar("Loss/Discriminator", avg_disc, epoch)
+                    self.writer.add_scalar("Loss/Generator_Total", avg_total, epoch)
                     self.writer.add_scalar(
                         "Learning_Rate/Generator",
                         scheduler_G.get_last_lr()[0],
@@ -501,7 +495,7 @@ class RVCTrainer:
                             loader_test,
                             desc=f"Testing epoch {epoch}",
                             leave=False,
-                            disable=not accelerator.is_main_process
+                            disable=not accelerator.is_main_process,
                         )
                         for i, (
                             phone,
@@ -669,6 +663,19 @@ class RVCTrainer:
             c_mel=c_mel,
             c_kl=c_kl,
             upload_to_hub=upload_to_hub,
+        )
+
+    def push_to_hub(self, repo: str, private: bool = True):
+        if not os.path.exists(self.exp_dir):
+            raise FileNotFoundError("Checkpoints not found")
+
+        api = HfApi()
+        repo_id = api.create_repo(repo_id=repo, private=private, exist_ok=True).repo_id
+
+        return upload_folder(
+            repo_id=repo_id,
+            folder_path=self.exp_dir,
+            commit_message="Upload via ZeroRVC",
         )
 
     def __del__(self):
