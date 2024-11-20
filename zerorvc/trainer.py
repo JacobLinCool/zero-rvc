@@ -214,8 +214,8 @@ class RVCTrainer:
             g_checkpoint, d_checkpoint = resume_from
             logger.info(f"Resuming from {g_checkpoint} and {d_checkpoint}")
 
-            G_checkpoint = torch.load(g_checkpoint, map_location=accelerator.device)
-            D_checkpoint = torch.load(d_checkpoint, map_location=accelerator.device)
+            G_checkpoint = torch.load(g_checkpoint, map_location=accelerator.device, weights_only=True)
+            D_checkpoint = torch.load(d_checkpoint, map_location=accelerator.device, weights_only=True)
 
             if "epoch" in G_checkpoint:
                 finished_epoch = int(G_checkpoint["epoch"])
@@ -272,6 +272,9 @@ class RVCTrainer:
             batch_size=batch_size,
             shuffle=False,
             collate_fn=TextAudioCollateMultiNSFsid(),
+            num_workers=2,
+            pin_memory=True,
+            prefetch_factor=2,
         )
         loader = accelerator.prepare(loader)
         return loader
@@ -537,14 +540,12 @@ class RVCTrainer:
                 )
 
                 res.save(self.exp_dir)
+                G.save_pretrained(self.exp_dir)
 
                 if upload_to_hub is not None:
                     self.push_to_hub(upload_to_hub)
+                    G.push_to_hub(upload_to_hub)
 
-        # save final model
-        G.save_pretrained(self.exp_dir)
-        if upload_to_hub is not None:
-            G.push_to_hub(upload_to_hub)
 
     def train(
         self,
