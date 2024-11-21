@@ -3,6 +3,7 @@ from glob import glob
 from logging import getLogger
 from typing import Literal, Optional, Tuple
 from pathlib import Path
+from threading import Thread
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -277,9 +278,6 @@ class RVCTrainer:
             batch_size=batch_size,
             shuffle=shuffle,
             collate_fn=TextAudioCollateMultiNSFsid(),
-            num_workers=2,
-            pin_memory=True,
-            prefetch_factor=2,
         )
         loader = accelerator.prepare(loader)
         return loader
@@ -307,12 +305,15 @@ class RVCTrainer:
         c_mel=45,
         c_kl=1.0,
         upload_to_hub: str | None = None,
+        upload_window_minutes=5,
     ):
         if accelerator is None:
             accelerator = Accelerator()
 
         if accelerator.is_main_process:
             logger.info("Start training")
+
+        upload_state_last = 0.0
 
         prev_loss_gen = -1.0
         prev_loss_fm = -1.0
@@ -553,8 +554,19 @@ class RVCTrainer:
                 G.save_pretrained(self.exp_dir)
 
                 if upload_to_hub is not None:
-                    self.push_to_hub(upload_to_hub)
-                    G.push_to_hub(upload_to_hub)
+                    if time.time() - upload_state_last > 60 * upload_window_minutes or epoch == epochs:
+                        try:
+                            self.push_to_hub(upload_to_hub)
+                            upload_state_last = time.time()
+                        except Exception:
+                            logger.error(f"Failed to upload to Hub.", exc_info=1)
+                    else:
+                        next_upload = 60 * upload_window_minutes - (
+                            time.time() - upload_state_last
+                        )
+                        logger.info(
+                            f"Skipping upload to Hub (next upload in {next_upload:.0f} seconds)"
+                        )
 
     def train(
         self,

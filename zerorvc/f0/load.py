@@ -25,13 +25,13 @@ def load_rmvpe(
         return rmvpe.to(device)
     if isinstance(rmvpe, str):
         model = RMVPE(4, 1, (2, 2))
-        model.load_state_dict(torch.load(rmvpe, map_location=device))
+        model.load_state_dict(torch.load(rmvpe, map_location=device, weights_only=True))
         model.to(device)
         return model
     if "rmvpe" not in auto_loaded_model:
         rmvpe = hf_hub_download("lj1995/VoiceConversionWebUI", "rmvpe.pt")
         model = RMVPE(4, 1, (2, 2))
-        model.load_state_dict(torch.load(rmvpe, map_location="cpu"))
+        model.load_state_dict(torch.load(rmvpe, map_location="cpu", weights_only=True))
         model.to(device)
         auto_loaded_model["rmvpe"] = model
     return auto_loaded_model["rmvpe"]

@@ -6,7 +6,7 @@ import logging
 import shutil
 from pkg_resources import resource_filename
 from accelerate import Accelerator
-from datasets import load_dataset, DatasetDict, Audio
+from datasets import load_dataset, DatasetDict, Dataset, Audio
 from .preprocess import Preprocessor, crop_feats_length
 from .hubert import HubertFeatureExtractor, HubertModel, load_hubert
 from .f0 import F0Extractor, RMVPE, load_rmvpe
@@ -138,7 +138,7 @@ def prepare(
     if accelerator is None:
         accelerator = Accelerator()
 
-    if isinstance(dir, DatasetDict):
+    if isinstance(dir, (DatasetDict, Dataset)):
         ds = dir
     else:
         mute_source = resource_filename("zerorvc", "assets/mute/mute48k.wav")
@@ -147,7 +147,7 @@ def prepare(
             logger.info(f"Copying {mute_source} to {mute_dest}")
             shutil.copy(mute_source, mute_dest)
 
-        ds: DatasetDict = load_dataset("audiofolder", data_dir=dir)
+        ds: DatasetDict | Dataset = load_dataset("audiofolder", data_dir=dir)
 
     for key in ds:
         ds[key] = ds[key].remove_columns(
