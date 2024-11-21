@@ -214,8 +214,12 @@ class RVCTrainer:
             g_checkpoint, d_checkpoint = resume_from
             logger.info(f"Resuming from {g_checkpoint} and {d_checkpoint}")
 
-            G_checkpoint = torch.load(g_checkpoint, map_location=accelerator.device, weights_only=True)
-            D_checkpoint = torch.load(d_checkpoint, map_location=accelerator.device, weights_only=True)
+            G_checkpoint = torch.load(
+                g_checkpoint, map_location=accelerator.device, weights_only=True
+            )
+            D_checkpoint = torch.load(
+                d_checkpoint, map_location=accelerator.device, weights_only=True
+            )
 
             if "epoch" in G_checkpoint:
                 finished_epoch = int(G_checkpoint["epoch"])
@@ -261,6 +265,7 @@ class RVCTrainer:
         self,
         dataset: Dataset,
         batch_size=1,
+        shuffle=True,
         accelerator: Accelerator | None = None,
     ):
         if accelerator is None:
@@ -270,7 +275,7 @@ class RVCTrainer:
         loader = DataLoader(
             dataset,
             batch_size=batch_size,
-            shuffle=False,
+            shuffle=shuffle,
             collate_fn=TextAudioCollateMultiNSFsid(),
             num_workers=2,
             pin_memory=True,
@@ -494,13 +499,14 @@ class RVCTrainer:
 
                 if loader_test is not None:
                     with torch.no_grad():
+                        sample_idx = 0
                         test_iterator = tqdm(
                             loader_test,
                             desc=f"Testing epoch {epoch}",
                             leave=False,
                             disable=not accelerator.is_main_process,
                         )
-                        for i, (
+                        for batch_idx, (
                             phone,
                             phone_lengths,
                             pitch,
@@ -511,17 +517,21 @@ class RVCTrainer:
                             wave_lengths,
                             sid,
                         ) in enumerate(test_iterator):
-                            audio_segment = (
-                                G.infer(phone, phone_lengths, pitch, pitchf, sid)[0][
-                                    0, 0
-                                ]
-                                .data.cpu()
-                                .float()
-                                .numpy()
-                            )
-                            self.writer.add_audio(
-                                f"Audio/{i}", audio_segment, epoch, sample_rate=self.sr
-                            )
+                            # Generate audio for each sample in the batch
+                            audio_segments = G.infer(
+                                phone, phone_lengths, pitch, pitchf, sid
+                            )[0]
+
+                            # Log each audio sample in the batch
+                            for i, audio in enumerate(audio_segments):
+                                audio_numpy = audio[0].data.cpu().float().numpy()
+                                self.writer.add_audio(
+                                    f"Audio/{sample_idx}",
+                                    audio_numpy,
+                                    epoch,
+                                    sample_rate=self.sr,
+                                )
+                                sample_idx += 1
 
                 res = TrainingCheckpoint(
                     epoch,
@@ -545,7 +555,6 @@ class RVCTrainer:
                 if upload_to_hub is not None:
                     self.push_to_hub(upload_to_hub)
                     G.push_to_hub(upload_to_hub)
-
 
     def train(
         self,
@@ -635,8 +644,9 @@ class RVCTrainer:
         loader_test = (
             self.setup_dataloader(
                 self.dataset_test,
-                batch_size=1,
+                batch_size=batch_size,
                 accelerator=accelerator,
+                shuffle=False,
             )
             if self.dataset_test is not None
             else None
@@ -668,7 +678,7 @@ class RVCTrainer:
 
     def push_to_hub(self, repo: str, private: bool = True):
         if not os.path.exists(self.exp_dir):
-            raise FileNotFoundError("Checkpoints not found")
+            raise FileNotFoundError("exp_dir not found")
 
         api = HfApi()
         repo_id = api.create_repo(repo_id=repo, private=private, exist_ok=True).repo_id
