@@ -1,6 +1,6 @@
 [project]
 name = "zerorvc"
-version = "0.0.13"
+version = "0.0.14"
 authors = [{ name = "Jacob Lin", email = "jacob@csie.cool" }]
 description = "Run Retrieval-based Voice Conversion training and inference with ease."
 readme = "README.md"

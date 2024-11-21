@@ -114,6 +114,7 @@ def prepare(
     hubert: str | HubertModel | None = None,
     rmvpe: str | RMVPE | None = None,
     batch_size=1,
+    max_slice_length: float | None = 3.0,
     accelerator: Accelerator = None,
     include_mute=True,
     stage=3,
@@ -149,7 +150,9 @@ def prepare(
         ds: DatasetDict = load_dataset("audiofolder", data_dir=dir)
 
     for key in ds:
-        ds[key] = ds[key].remove_columns([col for col in ds[key].column_names if col != "audio"])
+        ds[key] = ds[key].remove_columns(
+            [col for col in ds[key].column_names if col != "audio"]
+        )
     ds = ds.cast_column("audio", Audio(sampling_rate=sr))
 
     if stage <= 0:
@@ -157,14 +160,22 @@ def prepare(
 
     # Stage 1, CPU intensive
 
-    pp = Preprocessor(sr, 3.0)
+    pp = Preprocessor(sr, max_slice_length) if max_slice_length is not None else None
 
     def preprocess(rows):
         wav_gt = []
         wav_16k = []
         for row in rows["audio"]:
-            slices = pp.preprocess_audio(row["array"])
-            for slice in slices:
+            if pp is not None:
+                slices = pp.preprocess_audio(row["array"])
+                for slice in slices:
+                    wav_gt.append({"path": "", "array": slice, "sampling_rate": sr})
+                    slice16k = librosa.resample(slice, orig_sr=sr, target_sr=SR_16K)
+                    wav_16k.append(
+                        {"path": "", "array": slice16k, "sampling_rate": SR_16K}
+                    )
+            else:
+                slice = row["array"]
                 wav_gt.append({"path": "", "array": slice, "sampling_rate": sr})
                 slice16k = librosa.resample(slice, orig_sr=sr, target_sr=SR_16K)
                 wav_16k.append({"path": "", "array": slice16k, "sampling_rate": SR_16K})
