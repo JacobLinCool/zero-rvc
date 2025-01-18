@@ -1,7 +1,5 @@
 import torch
-from fairseq.checkpoint_utils import load_model_ensemble_and_task
-from fairseq.models.hubert import HubertModel
-from huggingface_hub import hf_hub_download
+from transformers import HubertModel
 from ..auto_loader import auto_loaded_model
 
 
@@ -26,12 +24,9 @@ def load_hubert(
     if isinstance(hubert, HubertModel):
         return hubert.to(device)
     if isinstance(hubert, str):
-        models, _, _ = load_model_ensemble_and_task([hubert])
-        model = models[0].to(device)
+        model = HubertModel.from_pretrained(hubert).to(device)
         return model
     if "hubert" not in auto_loaded_model:
-        hubert = hf_hub_download("lj1995/VoiceConversionWebUI", "hubert_base.pt")
-        models, _, _ = load_model_ensemble_and_task([hubert])
-        model = models[0].to(device)
+        model = HubertModel.from_pretrained("safe-models/ContentVec").to(device)
         auto_loaded_model["hubert"] = model
     return auto_loaded_model["hubert"]

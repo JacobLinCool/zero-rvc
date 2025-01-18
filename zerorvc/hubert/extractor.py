@@ -1,8 +1,7 @@
 import logging
-import torch
 import librosa
 import numpy as np
-from fairseq.models.hubert import HubertModel
+from transformers import AutoProcessor, HubertModel
 from ..constants import SR_16K
 
 logger = logging.getLogger(__name__)
@@ -17,24 +16,23 @@ class HubertFeatureExtractor:
     def load(self, hubert: HubertModel):
         self.hubert = hubert
         self.device = next(hubert.parameters()).device
+        self.processor = AutoProcessor.from_pretrained("safe-models/ContentVec")
         logger.info(f"HuBERT model is on {self.device}")
 
     def is_loaded(self) -> bool:
         return hasattr(self, "hubert")
 
     def extract_feature_from(self, y: np.ndarray) -> np.ndarray:
-        feats = torch.tensor(y).unsqueeze(0).to(self.device)
-        padding_mask = torch.BoolTensor(feats.shape).fill_(False).to(self.device)
-        inputs = {
-            "source": feats,
-            "padding_mask": padding_mask,
-            "output_layer": 12,
-        }
-        with torch.no_grad():
-            logits = self.hubert.extract_features(**inputs)
-            feats = logits[0].squeeze(0).float().cpu().numpy()
-            if np.isnan(feats).sum() > 0:
-                feats = np.nan_to_num(feats)
+        input_values = self.processor(
+            y, sampling_rate=self.sr, return_tensors="pt"
+        ).input_values
+        input_values = input_values.to(self.device)
+        feats = self.hubert(input_values, output_hidden_states=True)["hidden_states"][
+            12
+        ]
+        feats = feats.squeeze(0).float().cpu().detach().numpy()
+        if np.isnan(feats).sum() > 0:
+            feats = np.nan_to_num(feats)
         return feats
 
     def extract_feature(self, wav_file: str) -> np.ndarray:
