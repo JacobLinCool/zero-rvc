@@ -218,3 +218,36 @@ def prepare(
     ds = ds.map(fix_length, batched=True, batch_size=batch_size)
 
     return ds
+
+
+def show_dataset_pitch_distribution(dataset):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import numpy as np
+
+    sns.set_theme()
+    pitches = []
+    for row in dataset["f0"]:
+        pitches.extend([p for p in row if p != 1])
+
+    pitches = np.array(pitches)
+    stats = {
+        "mean": np.mean(pitches),
+        "std": np.std(pitches),
+        "min": np.min(pitches),
+        "max": np.max(pitches),
+        "median": np.median(pitches),
+        "q1": np.percentile(pitches, 25),
+        "q3": np.percentile(pitches, 75),
+    }
+
+    plt.figure(figsize=(10, 6))
+    sns.histplot(pitches, bins=100)
+    plt.title(
+        f"Pitch Distribution\nMean: {stats['mean']:.1f} ± {stats['std']:.1f}\n"
+        f"Range: [{stats['min']:.1f}, {stats['max']:.1f}]\n"
+        f"Quartiles: [{stats['q1']:.1f}, {stats['median']:.1f}, {stats['q3']:.1f}]"
+    )
+    plt.xlabel("Frequency (Note)")
+    plt.ylabel("Count")
+    plt.show()
