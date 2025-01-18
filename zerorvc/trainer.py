@@ -554,7 +554,10 @@ class RVCTrainer:
                 G.save_pretrained(self.exp_dir)
 
                 if upload_to_hub is not None:
-                    if time.time() - upload_state_last > 60 * upload_window_minutes or epoch == epochs:
+                    if (
+                        time.time() - upload_state_last > 60 * upload_window_minutes
+                        or epoch == epochs
+                    ):
                         try:
                             self.push_to_hub(upload_to_hub)
                             upload_state_last = time.time()
