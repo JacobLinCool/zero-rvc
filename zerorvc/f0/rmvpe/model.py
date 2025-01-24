@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from huggingface_hub import PyTorchModelHubMixin
 from .seq import BiGRU
 from .deepunet import DeepUnet
 from .mel import MelSpectrogram
@@ -11,7 +12,7 @@ from .constants import *
 logger = logging.getLogger(__name__)
 
 
-class RMVPE(nn.Module):
+class RMVPE(nn.Module, PyTorchModelHubMixin):
     def __init__(
         self,
         n_blocks: int,
@@ -23,7 +24,6 @@ class RMVPE(nn.Module):
         en_out_channels=16,
     ):
         super().__init__()
-        self.device = torch.device("cpu")
         self.mel_extractor = MelSpectrogram(
             N_MELS, SAMPLE_RATE, WINDOW_LENGTH, HOP_LENGTH, None, MEL_FMIN, MEL_FMAX
         )
@@ -51,18 +51,18 @@ class RMVPE(nn.Module):
         cents_mapping = 20 * np.arange(360) + MAGIC_CONST
         self.cents_mapping = np.pad(cents_mapping, (4, 4))  # 368
         self.cents_mapping_torch = torch.from_numpy(self.cents_mapping).to(
-            self.device, dtype=torch.float32
+            dtype=torch.float32
         )
+
+    def to(self, device):
+        self.cents_mapping_torch = self.cents_mapping_torch.to(device)
+        return super().to(device)
 
     def forward(self, mel: torch.Tensor) -> torch.Tensor:
         mel = mel.transpose(-1, -2).unsqueeze(1)
         x = self.cnn(self.unet(mel)).transpose(1, 2).flatten(-2)
         x = self.fc(x)
         return x
-
-    def to(self, device):
-        self.device = device
-        return super().to(device)
 
     def mel2hidden(self, mel: torch.Tensor):
         with torch.no_grad():
@@ -79,7 +79,7 @@ class RMVPE(nn.Module):
         return f0
 
     def infer(self, audio: torch.Tensor, thred=0.03, return_tensor=False):
-        mel = self.mel_extractor(audio.unsqueeze(0), center=True)
+        mel = self.mel_extractor(audio.unsqueeze(0))
         hidden = self.mel2hidden(mel)
         hidden = hidden[0].float()
         f0 = self.decode(hidden, thred=thred)
@@ -88,7 +88,7 @@ class RMVPE(nn.Module):
         return f0.cpu().numpy()
 
     def infer_from_audio(self, audio: np.ndarray, thred=0.03):
-        audio = torch.from_numpy(audio).to(self.device)
+        audio = torch.from_numpy(audio).to(next(self.parameters()).device)
         return self.infer(audio, thred=thred)
 
     def to_local_average_cents(

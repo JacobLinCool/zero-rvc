@@ -1,6 +1,5 @@
 import torch
 from transformers import HubertModel
-from ..auto_loader import auto_loaded_model
 
 
 def load_hubert(
@@ -26,7 +25,4 @@ def load_hubert(
     if isinstance(hubert, str):
         model = HubertModel.from_pretrained(hubert).to(device)
         return model
-    if "hubert" not in auto_loaded_model:
-        model = HubertModel.from_pretrained("safe-models/ContentVec").to(device)
-        auto_loaded_model["hubert"] = model
-    return auto_loaded_model["hubert"]
+    return HubertModel.from_pretrained("safe-models/ContentVec").to(device)

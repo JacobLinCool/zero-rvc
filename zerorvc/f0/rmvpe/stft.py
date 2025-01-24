@@ -6,6 +6,43 @@ from librosa.util import pad_center
 from scipy.signal import get_window
 
 
+class TorchSTFT(nn.Module):
+    def __init__(
+        self, filter_length=1024, hop_length=512, win_length=None, window="hann"
+    ):
+        """
+        This module implements an STFT using PyTorch's stft function.
+
+        Keyword Arguments:
+            filter_length {int} -- Length of filters used (default: {1024})
+            hop_length {int} -- Hop length of STFT (default: {512})
+            win_length {[type]} -- Length of the window function applied to each frame (if not specified, it
+                equals the filter length). (default: {None})
+            window {str} -- Type of window to use (options are bartlett, hann, hamming, blackman, blackmanharris)
+                (default: {'hann'})
+        """
+        super(TorchSTFT, self).__init__()
+        self.n_fft_new = filter_length
+        self.hop_length_new = hop_length
+        self.win_length_new = win_length if win_length else filter_length
+        self.center = True
+        hann_window_0 = torch.hann_window(self.win_length_new)
+        self.register_buffer("hann_window_0", hann_window_0, persistent=False)
+
+    def forward(self, input_data):
+        fft = torch.stft(
+            input_data,
+            n_fft=self.n_fft_new,
+            hop_length=self.hop_length_new,
+            win_length=self.win_length_new,
+            window=self.hann_window_0,
+            center=self.center,
+            return_complex=True,
+        )
+        magnitude = torch.sqrt(fft.real.pow(2) + fft.imag.pow(2))
+        return magnitude
+
+
 class STFT(nn.Module):
     def __init__(
         self, filter_length=1024, hop_length=512, win_length=None, window="hann"
@@ -55,7 +92,7 @@ class STFT(nn.Module):
         self.register_buffer("inverse_basis", inverse_basis.float(), persistent=False)
         self.register_buffer("fft_window", fft_window.float(), persistent=False)
 
-    def transform(self, input_data, return_phase=False):
+    def forward(self, input_data):
         """Take input data (audio) to STFT domain using convolution."""
         input_data = F.pad(
             input_data,
@@ -79,51 +116,4 @@ class STFT(nn.Module):
         imag_part = forward_transform[:, cutoff:, :]
         magnitude = torch.sqrt(real_part**2 + imag_part**2)
 
-        if return_phase:
-            phase = torch.atan2(imag_part.data, real_part.data)
-            return magnitude, phase
-        else:
-            return magnitude
-
-    def inverse(self, magnitude, phase):
-        """Inverse STFT using transposed convolution."""
-        recombined = torch.cat(
-            [magnitude * torch.cos(phase), magnitude * torch.sin(phase)], dim=1
-        )
-
-        # Apply inverse basis using transposed convolution
-        inverse_transform = F.conv_transpose1d(
-            recombined,
-            self.inverse_basis.unsqueeze(1),
-            stride=self.hop_length,
-            groups=1,
-        )
-
-        # Remove padding
-        inverse_transform = inverse_transform[:, 0, self.pad_amount : -self.pad_amount]
-
-        # Window normalization
-        n_frames = magnitude.size(-1)
-        window_sum = F.conv_transpose1d(
-            torch.ones_like(magnitude),
-            (self.fft_window * self.fft_window).unsqueeze(0).unsqueeze(0),
-            stride=self.hop_length,
-        )
-        window_sum = window_sum[:, 0, self.pad_amount : -self.pad_amount]
-        inverse_transform = inverse_transform / (window_sum + 1e-6)
-
-        return inverse_transform
-
-    def forward(self, input_data):
-        """Take input data (audio) to STFT domain and then back to audio.
-
-        Arguments:
-            input_data {tensor} -- Tensor of floats, with shape (num_batch, num_samples)
-
-        Returns:
-            reconstruction {tensor} -- Reconstructed audio given magnitude and phase. Of
-                shape (num_batch, num_samples)
-        """
-        self.magnitude, self.phase = self.transform(input_data, return_phase=True)
-        reconstruction = self.inverse(self.magnitude, self.phase)
-        return reconstruction
+        return magnitude

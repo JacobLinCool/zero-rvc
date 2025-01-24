@@ -1,7 +1,5 @@
 import torch
-from huggingface_hub import hf_hub_download
 from .rmvpe import RMVPE
-from ..auto_loader import auto_loaded_model
 
 
 def load_rmvpe(
@@ -24,14 +22,6 @@ def load_rmvpe(
     if isinstance(rmvpe, RMVPE):
         return rmvpe.to(device)
     if isinstance(rmvpe, str):
-        model = RMVPE(4, 1, (2, 2))
-        model.load_state_dict(torch.load(rmvpe, map_location=device, weights_only=True))
-        model.to(device)
+        model = RMVPE.from_pretrained(rmvpe).to(device)
         return model
-    if "rmvpe" not in auto_loaded_model:
-        rmvpe = hf_hub_download("lj1995/VoiceConversionWebUI", "rmvpe.pt")
-        model = RMVPE(4, 1, (2, 2))
-        model.load_state_dict(torch.load(rmvpe, map_location="cpu", weights_only=True))
-        model.to(device)
-        auto_loaded_model["rmvpe"] = model
-    return auto_loaded_model["rmvpe"]
+    return RMVPE.from_pretrained("safe-models/RMVPE").to(device)

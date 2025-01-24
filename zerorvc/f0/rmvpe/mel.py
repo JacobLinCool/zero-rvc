@@ -3,9 +3,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 import librosa
-from .stft import STFT
+from .stft import STFT, TorchSTFT
 
-EXPORTING_ONNX = os.getenv("ONNX_EXPORT") is not None
+USING_TORCH_STFT = os.getenv("USING_TORCH_STFT") is not None
 
 
 class MelSpectrogram(nn.Module):
@@ -45,10 +45,15 @@ class MelSpectrogram(nn.Module):
         self.n_fft_new = int(np.round(self.n_fft * self.factor))
         self.win_length_new = int(np.round(self.win_length * self.factor))
         self.hop_length_new = int(np.round(self.hop_length * self.speed))
-        hann_window_0 = torch.hann_window(self.win_length_new)
-        self.register_buffer("hann_window_0", hann_window_0, persistent=False)
 
-        if EXPORTING_ONNX:
+        if USING_TORCH_STFT:
+            self.stft = TorchSTFT(
+                filter_length=self.n_fft_new,
+                hop_length=self.hop_length_new,
+                win_length=self.win_length_new,
+                window="hann",
+            )
+        else:
             self.stft = STFT(
                 filter_length=self.n_fft_new,
                 hop_length=self.hop_length_new,
@@ -56,20 +61,8 @@ class MelSpectrogram(nn.Module):
                 window="hann",
             )
 
-    def forward(self, audio: torch.Tensor, center=True):
-        if EXPORTING_ONNX:
-            magnitude = self.stft.transform(audio)
-        else:
-            fft = torch.stft(
-                audio,
-                n_fft=self.n_fft_new,
-                hop_length=self.hop_length_new,
-                win_length=self.win_length_new,
-                window=self.hann_window_0,
-                center=center,
-                return_complex=True,
-            )
-            magnitude = torch.sqrt(fft.real.pow(2) + fft.imag.pow(2))
+    def forward(self, audio: torch.Tensor):
+        magnitude = self.stft(audio)
         mel_output = torch.matmul(self.mel_basis, magnitude)
         log_mel_spec = torch.log(torch.clamp(mel_output, min=self.clamp))
         return log_mel_spec

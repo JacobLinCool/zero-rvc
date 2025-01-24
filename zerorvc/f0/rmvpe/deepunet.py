@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 import torch
 from torch import nn
 from .constants import *
@@ -83,7 +83,7 @@ class ResEncoderBlock(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        kernel_size: int,
+        kernel_size: int | None = None,
         n_blocks=1,
         momentum=0.01,
     ):
@@ -91,19 +91,18 @@ class ResEncoderBlock(nn.Module):
         self.n_blocks = n_blocks
         self.conv = nn.ModuleList()
         self.conv.append(ConvBlockRes(in_channels, out_channels, momentum))
-        for i in range(n_blocks - 1):
+        for _ in range(n_blocks - 1):
             self.conv.append(ConvBlockRes(out_channels, out_channels, momentum))
         self.kernel_size = kernel_size
-        if self.kernel_size is not None:
+        if kernel_size is not None:
             self.pool = nn.AvgPool2d(kernel_size=kernel_size)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for i, conv in enumerate(self.conv):
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        for conv in self.conv:
             x = conv(x)
-        if self.kernel_size is not None:
-            return x, self.pool(x)
-        else:
-            return x
+        if self.kernel_size is None:
+            return x, x
+        return x, self.pool(x)
 
 
 class Intermediate(nn.Module):  #
@@ -121,14 +120,14 @@ class Intermediate(nn.Module):  #
         self.layers.append(
             ResEncoderBlock(in_channels, out_channels, None, n_blocks, momentum)
         )
-        for i in range(self.n_inters - 1):
+        for _ in range(self.n_inters - 1):
             self.layers.append(
                 ResEncoderBlock(out_channels, out_channels, None, n_blocks, momentum)
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
+        for layer in self.layers:
+            x, _ = layer(x)
         return x
 
 
@@ -159,13 +158,13 @@ class ResDecoderBlock(nn.Module):
         )
         self.conv2 = nn.ModuleList()
         self.conv2.append(ConvBlockRes(out_channels * 2, out_channels, momentum))
-        for i in range(n_blocks - 1):
+        for _ in range(n_blocks - 1):
             self.conv2.append(ConvBlockRes(out_channels, out_channels, momentum))
 
     def forward(self, x: torch.Tensor, concat_tensor: torch.Tensor) -> torch.Tensor:
         x = self.conv1(x)
         x = torch.cat((x, concat_tensor), dim=1)
-        for i, conv2 in enumerate(self.conv2):
+        for conv2 in self.conv2:
             x = conv2(x)
         return x
 
@@ -182,7 +181,7 @@ class Decoder(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList()
         self.n_decoders = n_decoders
-        for i in range(self.n_decoders):
+        for _ in range(self.n_decoders):
             out_channels = in_channels // 2
             self.layers.append(
                 ResDecoderBlock(in_channels, out_channels, stride, n_blocks, momentum)
