@@ -243,7 +243,7 @@ class RVC:
                 dtype=torch.float32, device=self.accelerator.device
             )
             pitch = torch.from_numpy(pitch).to(
-                dtype=torch.long, device=self.accelerator.device
+                dtype=torch.int32, device=self.accelerator.device
             )
             phone = torch.from_numpy(phone).to(
                 dtype=torch.float32, device=self.accelerator.device
@@ -277,8 +277,8 @@ class RVC:
                 feats = feats * pitchff + feats0 * (1 - pitchff)
                 feats = feats.to(feats0.dtype)
 
-            phone_len = torch.tensor([phone_len], dtype=torch.long)
-            sid = torch.tensor([0], dtype=torch.long)
+            phone_len = torch.tensor([phone_len], dtype=torch.int32)
+            sid = torch.tensor([0], dtype=torch.int32)
 
             logger.info(f"Feats shape: {feats.shape}")
             logger.info(f"Phone len: {phone_len}")

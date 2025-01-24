@@ -66,11 +66,9 @@ class RMVPE(nn.Module):
 
     def mel2hidden(self, mel: torch.Tensor):
         with torch.no_grad():
-            n_frames = mel.shape[-1]
+            n_frames = mel.shape[2]
             n_pad = 32 * ((n_frames - 1) // 32 + 1) - n_frames
-            if n_pad > 0:
-                mel = F.pad(mel, (0, n_pad), mode="constant")
-            # mel = mel.half() if self.is_half else mel.float()
+            mel = F.pad(mel, (0, n_pad), mode="constant")
             hidden = self(mel)
             return hidden[:, :n_frames]
 
@@ -100,22 +98,21 @@ class RMVPE(nn.Module):
         salience = F.pad(salience, (4, 4))
 
         center += 4
-        todo_salience = []
-        todo_cents_mapping = []
-        starts = center - 4
-        ends = center + 5
+        batch_indices = torch.arange(salience.shape[0], device=salience.device)
 
-        for idx in range(salience.shape[0]):
-            todo_salience.append(salience[idx, starts[idx] : ends[idx]])
-            todo_cents_mapping.append(self.cents_mapping_torch[starts[idx] : ends[idx]])
+        # Create indices for the 9-point window around each center
+        offsets = torch.arange(-4, 5, device=salience.device)
+        indices = center.unsqueeze(1) + offsets.unsqueeze(0)
 
-        todo_salience = torch.stack(todo_salience)
-        todo_cents_mapping = torch.stack(todo_cents_mapping).to(salience.device)
+        # Extract values using advanced indexing
+        todo_salience = salience[batch_indices.unsqueeze(1), indices]
+        todo_cents_mapping = self.cents_mapping_torch[indices]
+
         product_sum = torch.sum(todo_salience * todo_cents_mapping, 1)
         weight_sum = torch.sum(todo_salience, 1)
-        devided = product_sum / weight_sum
+        divided = product_sum / weight_sum
 
         maxx = torch.max(salience, 1).values
-        devided[maxx <= thred] = 0
+        divided[maxx <= thred] = 0
 
-        return devided
+        return divided

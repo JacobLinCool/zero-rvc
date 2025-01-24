@@ -239,7 +239,11 @@ class MultiHeadAttention(nn.Module):
         mask: Optional[torch.Tensor] = None,
     ):
         # reshape [b, d, t] -> [b, n_h, t, d_k]
-        b, d, t_s = key.size()
+        b, d, t_s = key.shape
+
+        if type(t_s) == int:
+            t_s = torch.tensor(t_s, device=key.device, dtype=torch.int32)
+
         t_t = query.size(2)
         query = query.view(b, self.n_heads, self.k_channels, t_t).transpose(2, 3)
         key = key.view(b, self.n_heads, self.k_channels, t_s).transpose(2, 3)
@@ -307,20 +311,48 @@ class MultiHeadAttention(nn.Module):
         ret = torch.matmul(x, y.unsqueeze(0).transpose(-2, -1))
         return ret
 
-    def _get_relative_embeddings(self, relative_embeddings: torch.Tensor, length: int):
-        # max_relative_position = 2 * self.window_size + 1
-        # Pad first before slice to avoid using cond ops.
-        pad_length: int = max(length - (self.window_size + 1), 0)
-        slice_start_position = max((self.window_size + 1) - length, 0)
-        slice_end_position = slice_start_position + 2 * length - 1
-        if pad_length > 0:
-            padded_relative_embeddings = F.pad(
-                relative_embeddings,
-                # commons.convert_pad_shape([[0, 0], [pad_length, pad_length], [0, 0]]),
-                [0, 0, pad_length, pad_length, 0, 0],
+    def _get_relative_embeddings(
+        self, relative_embeddings: torch.Tensor, length: torch.Tensor
+    ):
+        """
+        Get relative embeddings based on the input length.
+
+        Args:
+            relative_embeddings: Predefined relative embeddings [n_heads_rel, max_relative_position, d].
+            length: The length of the sequence as a tensor.
+
+        Returns:
+            Used relative embeddings [n_heads_rel, 2*length-1, d].
+        """
+        # Ensure `length` is a tensor
+        if not isinstance(length, torch.Tensor):
+            length = torch.as_tensor(
+                length, device=relative_embeddings.device, dtype=torch.int32
             )
-        else:
-            padded_relative_embeddings = relative_embeddings
+
+        # Calculate padding dynamically using PyTorch operations
+        pad_length = torch.maximum(
+            length - (self.window_size + 1),
+            torch.zeros(1, device=length.device, dtype=length.dtype),
+        )
+        slice_start_position = torch.maximum(
+            (self.window_size + 1) - length,
+            torch.zeros(1, device=length.device, dtype=length.dtype),
+        )
+        slice_end_position = slice_start_position + 2 * length - 1
+
+        padded_relative_embeddings = F.pad(
+            relative_embeddings,
+            [
+                0,
+                0,
+                pad_length,
+                pad_length,
+                0,
+                0,
+            ],
+        )
+
         used_relative_embeddings = padded_relative_embeddings[
             :, slice_start_position:slice_end_position
         ]
@@ -344,7 +376,7 @@ class MultiHeadAttention(nn.Module):
         x_flat = F.pad(
             x_flat,
             # commons.convert_pad_shape([[0, 0], [0, 0], [0, int(length) - 1]])
-            [0, int(length) - 1, 0, 0, 0, 0],
+            [0, length - 1, 0, 0, 0, 0],
         )
 
         # Reshape and slice out the padded elements.
@@ -363,9 +395,9 @@ class MultiHeadAttention(nn.Module):
         x = F.pad(
             x,
             # commons.convert_pad_shape([[0, 0], [0, 0], [0, 0], [0, int(length) - 1]])
-            [0, int(length) - 1, 0, 0, 0, 0, 0, 0],
+            [0, length - 1, 0, 0, 0, 0, 0, 0],
         )
-        x_flat = x.view([batch, heads, int(length**2) + int(length * (length - 1))])
+        x_flat = x.view([batch, heads, length**2 + length * (length - 1)])
         # add 0's in the beginning that will skew the elements after reshape
         x_flat = F.pad(
             x_flat,

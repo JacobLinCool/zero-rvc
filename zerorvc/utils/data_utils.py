@@ -23,32 +23,32 @@ class TextAudioCollateMultiNSFsid:
         with device:
             # Right zero-pad all one-hot text sequences to max input length
             _, ids_sorted_decreasing = torch.sort(
-                torch.tensor([x["spec"].size(1) for x in batch], dtype=torch.long),
+                torch.tensor([x["spec"].size(1) for x in batch], dtype=torch.int32),
                 dim=0,
                 descending=True,
             )
 
             max_spec_len = max([x["spec"].size(1) for x in batch])
             max_wave_len = max([x["wav_gt"]["array"].size(0) for x in batch])
-            spec_lengths = torch.zeros(len(batch), dtype=torch.long)
-            wave_lengths = torch.zeros(len(batch), dtype=torch.long)
+            spec_lengths = torch.zeros(len(batch), dtype=torch.int32)
+            wave_lengths = torch.zeros(len(batch), dtype=torch.int32)
             spec_padded = torch.zeros(
                 len(batch), batch[0]["spec"].size(0), max_spec_len, dtype=torch.float32
             )
             wave_padded = torch.zeros(len(batch), 1, max_wave_len, dtype=torch.float32)
 
             max_phone_len = max([x["hubert_feats"].size(0) for x in batch])
-            phone_lengths = torch.zeros(len(batch), dtype=torch.long)
+            phone_lengths = torch.zeros(len(batch), dtype=torch.int32)
             phone_padded = torch.zeros(
                 len(batch),
                 max_phone_len,
                 batch[0]["hubert_feats"].shape[1],
                 dtype=torch.float32,
             )  # (spec, wav, phone, pitch)
-            pitch_padded = torch.zeros(len(batch), max_phone_len, dtype=torch.long)
+            pitch_padded = torch.zeros(len(batch), max_phone_len, dtype=torch.int32)
             pitchf_padded = torch.zeros(len(batch), max_phone_len, dtype=torch.float32)
             # dv = torch.FloatTensor(len(batch), 256)#gin=256
-            sid = torch.zeros(len(batch), dtype=torch.long)
+            sid = torch.zeros(len(batch), dtype=torch.int32)
 
             for i in range(len(ids_sorted_decreasing)):
                 row = batch[ids_sorted_decreasing[i]]
@@ -70,7 +70,7 @@ class TextAudioCollateMultiNSFsid:
                 pitchf = row["f0nsf"]
                 pitchf_padded[i, : pitchf.size(0)] = pitchf
 
-                sid[i] = torch.tensor([0], dtype=torch.long)
+                sid[i] = torch.tensor([0], dtype=torch.int32)
 
             return (
                 phone_padded,
