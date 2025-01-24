@@ -1,7 +1,11 @@
+import os
 import torch
 import torch.nn as nn
 import numpy as np
 import librosa
+from .stft import STFT
+
+EXPORTING_ONNX = os.getenv("ONNX_EXPORT") is not None
 
 
 class MelSpectrogram(nn.Module):
@@ -44,17 +48,28 @@ class MelSpectrogram(nn.Module):
         hann_window_0 = torch.hann_window(self.win_length_new)
         self.register_buffer("hann_window_0", hann_window_0, persistent=False)
 
+        if EXPORTING_ONNX:
+            self.stft = STFT(
+                filter_length=self.n_fft_new,
+                hop_length=self.hop_length_new,
+                win_length=self.win_length_new,
+                window="hann",
+            )
+
     def forward(self, audio: torch.Tensor, center=True):
-        fft = torch.stft(
-            audio,
-            n_fft=self.n_fft_new,
-            hop_length=self.hop_length_new,
-            win_length=self.win_length_new,
-            window=self.hann_window_0,
-            center=center,
-            return_complex=True,
-        )
-        magnitude = torch.sqrt(fft.real.pow(2) + fft.imag.pow(2))
+        if EXPORTING_ONNX:
+            magnitude = self.stft.transform(audio)
+        else:
+            fft = torch.stft(
+                audio,
+                n_fft=self.n_fft_new,
+                hop_length=self.hop_length_new,
+                win_length=self.win_length_new,
+                window=self.hann_window_0,
+                center=center,
+                return_complex=True,
+            )
+            magnitude = torch.sqrt(fft.real.pow(2) + fft.imag.pow(2))
         mel_output = torch.matmul(self.mel_basis, magnitude)
         log_mel_spec = torch.log(torch.clamp(mel_output, min=self.clamp))
         return log_mel_spec

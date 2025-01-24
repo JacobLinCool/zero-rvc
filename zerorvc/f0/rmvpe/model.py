@@ -50,6 +50,9 @@ class RMVPE(nn.Module):
 
         cents_mapping = 20 * np.arange(360) + MAGIC_CONST
         self.cents_mapping = np.pad(cents_mapping, (4, 4))  # 368
+        self.cents_mapping_torch = torch.from_numpy(self.cents_mapping).to(
+            self.device, dtype=torch.float32
+        )
 
     def forward(self, mel: torch.Tensor) -> torch.Tensor:
         mel = mel.transpose(-1, -2).unsqueeze(1)
@@ -71,43 +74,48 @@ class RMVPE(nn.Module):
             hidden = self(mel)
             return hidden[:, :n_frames]
 
-    def decode(self, hidden: np.ndarray, thred=0.03):
+    def decode(self, hidden: torch.Tensor, thred=0.03):
         cents_pred = self.to_local_average_cents(hidden, thred=thred)
         f0 = 10 * (2 ** (cents_pred / 1200))
         f0[f0 == 10] = 0
-        # f0 = np.array([10 * (2 ** (cent_pred / 1200)) if cent_pred else 0 for cent_pred in cents_pred])
         return f0
 
-    def infer(self, audio: torch.Tensor, thred=0.03):
+    def infer(self, audio: torch.Tensor, thred=0.03, return_tensor=False):
         mel = self.mel_extractor(audio.unsqueeze(0), center=True)
         hidden = self.mel2hidden(mel)
-        hidden = hidden[0]
-        f0 = self.decode(hidden.float().cpu(), thred=thred)
-        return f0
+        hidden = hidden[0].float()
+        f0 = self.decode(hidden, thred=thred)
+        if return_tensor:
+            return f0
+        return f0.cpu().numpy()
 
     def infer_from_audio(self, audio: np.ndarray, thred=0.03):
         audio = torch.from_numpy(audio).to(self.device)
         return self.infer(audio, thred=thred)
 
-    def to_local_average_cents(self, salience: np.ndarray, thred=0.05) -> np.ndarray:
-        center = np.argmax(salience, axis=1)  # 帧长#index
-        salience = np.pad(salience, ((0, 0), (4, 4)))  # 帧长,368
+    def to_local_average_cents(
+        self, salience: torch.Tensor, thred=0.05
+    ) -> torch.Tensor:
+        center = torch.argmax(salience, dim=1)
+        salience = F.pad(salience, (4, 4))
 
         center += 4
         todo_salience = []
         todo_cents_mapping = []
         starts = center - 4
         ends = center + 5
+
         for idx in range(salience.shape[0]):
-            todo_salience.append(salience[:, starts[idx] : ends[idx]][idx])
-            todo_cents_mapping.append(self.cents_mapping[starts[idx] : ends[idx]])
+            todo_salience.append(salience[idx, starts[idx] : ends[idx]])
+            todo_cents_mapping.append(self.cents_mapping_torch[starts[idx] : ends[idx]])
 
-        todo_salience = np.array(todo_salience)  # 帧长，9
-        todo_cents_mapping = np.array(todo_cents_mapping)  # 帧长，9
-        product_sum = np.sum(todo_salience * todo_cents_mapping, 1)
-        weight_sum = np.sum(todo_salience, 1)  # 帧长
-        devided = product_sum / weight_sum  # 帧长
+        todo_salience = torch.stack(todo_salience)
+        todo_cents_mapping = torch.stack(todo_cents_mapping).to(salience.device)
+        product_sum = torch.sum(todo_salience * todo_cents_mapping, 1)
+        weight_sum = torch.sum(todo_salience, 1)
+        devided = product_sum / weight_sum
 
-        maxx = np.max(salience, axis=1)  # 帧长
+        maxx = torch.max(salience, 1).values
         devided[maxx <= thred] = 0
+
         return devided
